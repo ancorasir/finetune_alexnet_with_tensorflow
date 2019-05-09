@@ -12,7 +12,7 @@ Author: Frederik Kratzert
 contact: f.kratzert(at)gmail.com
 """
 
-import os
+import os, re,glob
 
 import numpy as np
 import tensorflow as tf
@@ -21,6 +21,8 @@ from alexnet import AlexNet
 from datagenerator import ImageDataGenerator
 from datetime import datetime
 from tensorflow.data import Iterator
+from utils import angle_error, RotNetDataGenerator
+from keras.applications.imagenet_utils import preprocess_input
 """
 Configuration Part.
 """
@@ -31,8 +33,8 @@ val_file = 'val_real.txt'
 
 # Learning params
 learning_rate = 0.001
-num_epochs = 100
-batch_size = 128
+num_epochs = 1000
+batch_size = 24
 
 # Network params
 dropout_rate = 0.5
@@ -54,28 +56,30 @@ Main Part of the finetuning Script.
 if not os.path.isdir(checkpoint_path):
     os.mkdir(checkpoint_path)
 
+numbers = re.compile(r'(\d+)')
+def numericalSort(value):
+    parts = numbers.split(value)
+    parts[1::2] = map(int, parts[1::2])
+    return parts
 
+all_images = sorted(glob.glob('./jigsaw_images/*.png'), key=numericalSort)
+train_filenames = all_images
+test_filenames = all_images
+
+
+print(len(train_filenames), 'train samples')
+print(len(test_filenames), 'test samples')
 # Place data loading and preprocessing on the cpu
 with tf.device('/cpu:0'):
-    tr_data = ImageDataGenerator(train_file,
-                                 mode='training',
-                                 batch_size=batch_size,
-                                 num_classes=num_classes,
-                                 shuffle=True)
-    val_data = ImageDataGenerator(val_file,
-                                  mode='inference',
-                                  batch_size=batch_size,
-                                  num_classes=num_classes,
-                                  shuffle=False)
-    # create an reinitializable iterator given the dataset structure
-    iterator = Iterator.from_structure(tr_data.data.output_types,
-                                       tr_data.data.output_shapes)
-    next_batch = iterator.get_next()
-
-
-# Ops for initializing the two different iterators
-training_init_op = iterator.make_initializer(tr_data.data)
-validation_init_op = iterator.make_initializer(val_data.data)
+    iterator = RotNetDataGenerator(
+        train_filenames,
+        input_shape=(227, 227, 3),
+        batch_size=batch_size,
+        preprocess_func=preprocess_input,
+        crop_center=True,
+        crop_largest_rect=True,
+        shuffle=True)
+    next_batch = iterator.next()
 
 # TF placeholder for graph input and output
 x = tf.placeholder(tf.float32, [batch_size, 227, 227, 3])
@@ -139,8 +143,6 @@ writer = tf.summary.FileWriter(filewriter_path)
 saver = tf.train.Saver()
 
 # Get the number of training/validation steps per epoch
-train_batches_per_epoch = int(np.floor(tr_data.data_size/batch_size))
-val_batches_per_epoch = int(np.floor(val_data.data_size / batch_size))
 
 # Start Tensorflow session
 with tf.Session() as sess:
@@ -156,33 +158,25 @@ with tf.Session() as sess:
     for epoch in range(num_epochs):
         print("{} Epoch number: {}".format(datetime.now(), epoch+1))
         # Initialize iterator with the training dataset
-        sess.run(training_init_op)
-        for step in range(train_batches_per_epoch):
-            # get next batch of data
-            img_batch, label_batch = sess.run(next_batch)
-            # And run the training op
-            sess.run(train_op, feed_dict={x: img_batch,
-                                          y: label_batch,
-                                          keep_prob: dropout_rate})
-            # Generate summary with the current batch of data and write to file
-            if step % display_step == 0:
-                s = sess.run(merged_summary, feed_dict={x: img_batch,
-                                                        y: label_batch,
-                                                        keep_prob: 1.})
-                writer.add_summary(s, epoch*train_batches_per_epoch + step)
-        # Validate the model on the entire validation set
-        print("{} Start validation".format(datetime.now()))
-        sess.run(validation_init_op)
-        test_acc = 0.
-        test_count = 0
-        for _ in range(val_batches_per_epoch):
-            img_batch, label_batch = sess.run(next_batch)
-            acc = sess.run(accuracy, feed_dict={x: img_batch,
+        # get next batch of data
+        img_batch, label_batch = iterator.next()
+        # And run the training op
+        sess.run(train_op, feed_dict={x: img_batch,
+                                      y: label_batch,
+                                      keep_prob: dropout_rate})
+        # Generate summary with the current batch of data and write to file
+        s = sess.run(merged_summary, feed_dict={x: img_batch,
                                                 y: label_batch,
                                                 keep_prob: 1.})
-            test_acc += acc
-            test_count += 1
-        test_acc /= test_count
+        writer.add_summary(s, epoch)
+        # Validate the model on the entire validation set
+        print("{} Start validation".format(datetime.now()))
+        test_acc = 0.
+        img_batch, label_batch = iterator.next()
+        acc = sess.run(accuracy, feed_dict={x: img_batch,
+                                            y: label_batch,
+                                            keep_prob: 1.})
+        test_acc = acc
         print("{} Validation Accuracy = {:.4f}".format(datetime.now(),
                                                        test_acc))
         print("{} Saving checkpoint of model...".format(datetime.now()))
