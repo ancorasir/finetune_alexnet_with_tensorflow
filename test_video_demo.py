@@ -23,6 +23,9 @@ while False:
     aligned_depth_frame = aligned_frames.get_depth_frame()
     color_frame = aligned_frames.get_color_frame()
     image = np.asanyarray(color_frame.get_data())
+    cv2.imshow("Image",image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
     ####################################################
     # process real image to remove texture
     # mask = cv2.inRange(image, np.array([0, 80, 0]),np.array([140, 255,65]))
@@ -51,7 +54,7 @@ class Grasp_predictor(object):
     def __init__(self):
         self.x = tf.placeholder(tf.float32, [1, 227, 227, 3])
         # Initialize model
-        self.model = AlexNet(self.x, 1, 360, [])
+        self.model = AlexNet(self.x, 1, 6, [])
         # Link variable to model output
         self.score = self.model.fc8
         self.softmax = tf.nn.softmax(self.score)
@@ -104,11 +107,13 @@ while True:
     aligned_depth_frame = aligned_frames.get_depth_frame()
     color_frame = aligned_frames.get_color_frame()
     image = np.asanyarray(color_frame.get_data())
-    crop_image = image[:, 280:280+720]
-    angle = predictor.predict_rotation(crop_image)
-    info = "Angle: %s"%(angle[0])
-    cv2.putText(crop_image, text=info, org=(10, 40), fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=1, color=(0, 0, 255), thickness=2)
+    crop_image = image[445:540, 764:869, :]
+    resized = cv2.resize(crop_image,(100,100))
+    label = predictor.predict_rotation(image)
+    names = ["carboard","glass", "metal","paper","plastic", "trash"]
+    info = "Label: %s"%(names[label[0]])
+    cv2.putText(image, text=info, org=(10, 40), fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                    fontScale=0.5, color=(0, 0, 255), thickness=2)
     cv2.namedWindow("result", cv2.WINDOW_AUTOSIZE)
-    cv2.imshow("result", crop_image)
+    cv2.imshow("result", image)
     if cv2.waitKey(1) & 0xFF == ord('q'): break
